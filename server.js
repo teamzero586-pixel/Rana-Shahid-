@@ -16,7 +16,7 @@ app.get('/api/download', (req, res) => {
     const limit = req.query.limit || 1;
 
     if (!query) {
-        return res.status(400).send('Query ya URL zaroori hai');
+        return res.status(400).json({ error: 'Query ya URL zaroori hai' });
     }
 
     const timestamp = Date.now();
@@ -28,35 +28,43 @@ app.get('/api/download', (req, res) => {
         ytDlpTarget = `ytsearch${limit}:${query}`;
     }
 
-    // 403 Error se bachne ke liye `--user-agent` aur `--geo-bypass` add kiya hai
     let ytDlpCommand = '';
     if (format === 'audio') {
-        ytDlpCommand = `yt-dlp --geo-bypass --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -f bestaudio -x --audio-format mp3 -o "${downloadDir}/%(title)s.%(ext)s" "${ytDlpTarget}"`;
+        ytDlpCommand = `yt-dlp --geo-bypass --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" -f bestaudio -x --audio-format mp3 -o "${downloadDir}/%(title)s.%(ext)s" "${ytDlpTarget}"`;
     } else {
-        ytDlpCommand = `yt-dlp --geo-bypass --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" -o "${downloadDir}/%(title)s.%(ext)s" "${ytDlpTarget}"`;
+        ytDlpCommand = `yt-dlp --geo-bypass --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" -o "${downloadDir}/%(title)s.%(ext)s" "${ytDlpTarget}"`;
     }
 
     console.log("Running Command:", ytDlpCommand);
 
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="Rana_Shahid_Downloads_${timestamp}.zip"`);
-
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.pipe(res);
-
     exec(ytDlpCommand, (error, stdout, stderr) => {
         if (error) {
             console.error("Download Error:", error);
-            archive.abort();
+            if (fs.existsSync(downloadDir)) fs.rmSync(downloadDir, { recursive: true, force: true });
             return;
         }
-        
+
+        // ZIP Archive create karna
+        const zipPath = path.join(__dirname, `Rana_Shahid_${timestamp}.zip`);
+        const output = fs.createWriteStream(zipPath);
+        const archive = archiver('zip', { zlib: { level: 9 } });
+
+        output.on('close', () => {
+            // File banne ke baad client ko send kar dena
+            res.download(zipPath, () => {
+                // Cleanup files after sending
+                if (fs.existsSync(downloadDir)) fs.rmSync(downloadDir, { recursive: true, force: true });
+                if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+            });
+        });
+
+        archive.on('error', (err) => {
+            throw err;
+        });
+
+        archive.pipe(output);
         archive.directory(downloadDir, false);
         archive.finalize();
-
-        archive.on('end', () => {
-            fs.rmSync(downloadDir, { recursive: true, force: true });
-        });
     });
 });
 
